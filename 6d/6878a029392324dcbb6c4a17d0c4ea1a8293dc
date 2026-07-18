@@ -1,0 +1,29 @@
+README.md
+  s_53168cace5d67d::t_bb51719e0294bb 1-129
+scripts/build-xcframework.sh
+  s_93c05dc2ea86f2::t_579ab861cb9366 1-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "6d6878a029392324dcbb6c4a17d0c4ea1a8293dc",
+  "prompts": {},
+  "sessions": {
+    "s_53168cace5d67d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "17217173-2f91-45c2-9999-559543ac6261",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Sam Schmitt <sam@samschmitt.com>"
+    },
+    "s_93c05dc2ea86f2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72bfd433-703a-4d57-a27c-bdfcf4c17a13",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Sam Schmitt <sam@samschmitt.com>"
+    }
+  }
+}
