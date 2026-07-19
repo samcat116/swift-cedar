@@ -1,0 +1,132 @@
+name: Release
+
+# Builds the prebuilt binaries for all platforms, then publishes a GitHub
+# release whose tag carries a Package.swift pointing at the release assets
+# (url: + checksum:), so consumers never need a Rust toolchain.
+#
+# The stamped Package.swift exists only on the tag — main keeps the
+# path-based binary targets for local development.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (without the leading v), e.g. 0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  apple:
+    name: Build XCFramework
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim
+      - name: Build
+        run: ./scripts/build-xcframework.sh
+      - name: Check committed bindings are current
+        run: git diff --exit-code Sources/CedarFFI/CedarFFI.swift
+      - name: Zip
+        run: ditto -c -k --keepParent artifacts/CedarFFI.xcframework CedarFFI.xcframework.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xcframework
+          path: CedarFFI.xcframework.zip
+          if-no-files-found: error
+
+  linux:
+    name: Build Linux static lib (${{ matrix.arch }})
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: ./scripts/build-linux.sh
+      - name: Check committed bindings are current
+        run: git diff --exit-code Sources/CedarFFI/CedarFFI.swift
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.arch }}
+          path: artifacts/CedarFFI.artifactbundle
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [apple, linux]
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: xcframework
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle-x86_64
+          path: bundle-x86_64/CedarFFI.artifactbundle
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle-aarch64
+          path: bundle-aarch64/CedarFFI.artifactbundle
+
+      - name: Merge Linux artifact bundle
+        run: |
+          set -euo pipefail
+          cp -R bundle-x86_64/CedarFFI.artifactbundle CedarFFI.artifactbundle
+          cp -R bundle-aarch64/CedarFFI.artifactbundle/CedarFFIBinary/aarch64-unknown-linux-gnu \
+            CedarFFI.artifactbundle/CedarFFIBinary/
+          jq -s '.[0].artifacts.CedarFFIBinary.variants += .[1].artifacts.CedarFFIBinary.variants | .[0]' \
+            bundle-x86_64/CedarFFI.artifactbundle/info.json \
+            bundle-aarch64/CedarFFI.artifactbundle/info.json \
+            > CedarFFI.artifactbundle/info.json
+          zip -r CedarFFI.artifactbundle.zip CedarFFI.artifactbundle
+
+      - name: Stamp Package.swift and tag
+        run: |
+          set -euo pipefail
+          XC_SUM=$(sha256sum CedarFFI.xcframework.zip | cut -d' ' -f1)
+          AB_SUM=$(sha256sum CedarFFI.artifactbundle.zip | cut -d' ' -f1)
+          ./scripts/stamp-release-binaries.sh "$VERSION" "$XC_SUM" "$AB_SUM"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Release v$VERSION"
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
+          echo "XC_SUM=$XC_SUM" >> "$GITHUB_ENV"
+          echo "AB_SUM=$AB_SUM" >> "$GITHUB_ENV"
+
+      - name: Create GitHub release
+        run: |
+          set -euo pipefail
+          cat > notes.md <<EOF
+          Prebuilt binaries for the Cedar policy engine core:
+
+          | Asset | Platforms | SHA-256 |
+          | --- | --- | --- |
+          | CedarFFI.xcframework.zip | macOS (arm64 + x86_64), iOS device & simulator | \`$XC_SUM\` |
+          | CedarFFI.artifactbundle.zip | Linux (x86_64 + aarch64, gnu) — requires Swift 6.3+ | \`$AB_SUM\` |
+
+          The tagged Package.swift references these assets, so depending on this
+          version needs no Rust toolchain:
+
+          \`\`\`swift
+          .package(url: "https://github.com/${{ github.repository }}.git", from: "$VERSION")
+          \`\`\`
+          EOF
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --notes-file notes.md \
+            CedarFFI.xcframework.zip CedarFFI.artifactbundle.zip

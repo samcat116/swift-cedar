@@ -88,13 +88,32 @@ let result = schema.validate(policies)   // .passed, .errors, .warnings
 try Authorizer().isAuthorized(request, policies: policies, entities: entities, schema: schema)
 ```
 
-## Building
+## Installing
 
-The Rust core must be built once before the Swift package resolves
-(`artifacts/CedarFFI.xcframework` is generated, not checked in):
+Tagged releases ship prebuilt binaries (no Rust toolchain needed):
+
+- **Apple platforms** — `CedarFFI.xcframework.zip` (macOS arm64 + x86_64, iOS
+  device and simulator)
+- **Linux** — `CedarFFI.artifactbundle.zip` (x86_64 + aarch64 gnu), consumed as
+  a static-library artifact bundle ([SE-0482](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0482-swiftpm-static-library-binary-target-non-apple-platforms.md));
+  requires Swift 6.3 or later
+
+The `Package.swift` on each release tag points at those assets, so this is just:
+
+```swift
+.package(url: "https://github.com/samcat116/swift-cedar.git", from: "0.1.0")
+```
+
+## Building from source
+
+On `main` the binary target is path-based and generated, not checked in, so the
+Rust core must be built once before the Swift package resolves. Both scripts
+require a Rust toolchain.
+
+macOS:
 
 ```sh
-./scripts/build-xcframework.sh   # requires a Rust toolchain
+./scripts/build-xcframework.sh   # artifacts/CedarFFI.xcframework
 swift test
 ```
 
@@ -106,9 +125,20 @@ rustup target add aarch64-apple-ios aarch64-apple-ios-sim
 ./scripts/build-xcframework.sh
 ```
 
-For distribution, publish the XCFramework as a release asset and switch the
-`binaryTarget` in `Package.swift` to a `url:`/`checksum:` pair so consumers don't
-need Rust.
+Linux (Swift 6.3+):
+
+```sh
+./scripts/build-linux.sh         # artifacts/CedarFFI.artifactbundle
+swift test
+```
+
+## Releasing
+
+The `Release` GitHub Actions workflow (manual dispatch, takes a version number)
+builds the XCFramework and the Linux artifact bundle, uploads both as release
+assets, and tags a commit whose `Package.swift` references them by
+`url:`/`checksum:`. The stamped manifest exists only on the tag; `main` keeps
+the path-based targets for local development.
 
 ## Layout
 
@@ -121,8 +151,6 @@ need Rust.
 
 - Template linking (`PolicySet` parses templates but there is no link API yet)
 - Partial evaluation
-- Linux support (the Rust core builds fine on Linux; packaging would move from
-  `binaryTarget` to a system-library target)
 
 ## License
 
