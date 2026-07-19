@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build XCFramework
+        run: ./scripts/build-xcframework.sh
+      - name: Test
+        run: swift test
+
+  linux:
+    name: Linux (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    container: swift:6.3-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: |
+          apt-get update && apt-get install -y curl build-essential
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build artifact bundle
+        run: ./scripts/build-linux.sh
+      - name: Test
+        run: swift test
