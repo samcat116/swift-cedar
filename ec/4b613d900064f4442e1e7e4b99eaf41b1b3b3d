@@ -1,0 +1,35 @@
+.github/workflows/release.yml
+  s_ead24d262e0af6::t_eb86aacf1ccd12 1-132
+Package.swift
+  s_ead24d262e0af6::t_7b1b2367a2a3ac 33-37
+  s_ead24d262e0af6::t_3a5f18fa65febb 4-19
+.github/workflows/ci.yml
+  s_ead24d262e0af6::t_e3e1783e325782 1-52
+README.md
+  s_ead24d262e0af6::t_c0df0c9cb0a1c6 91,93-113,116,128-141
+scripts/build-linux.sh
+  s_ead24d262e0af6::t_f5bc4d217365d8 20
+  s_ead24d262e0af6::t_9f8e214c851d75 67
+  s_ead24d262e0af6::t_960f4157ccb933 45,48
+  s_ead24d262e0af6::t_d04ca387be503d 1-19,21-44,46-47,49-66,68-97
+scripts/stamp-release-binaries.sh
+  s_ead24d262e0af6::t_018eb70687f673 1-61
+.gitignore
+  s_ead24d262e0af6::t_95fb06830a1c42 1-8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "ec4b613d900064f4442e1e7e4b99eaf41b1b3b3d",
+  "prompts": {},
+  "sessions": {
+    "s_ead24d262e0af6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be75026-89b9-41f3-bb15-c4ee855d9628",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Sam Schmitt <sam@samschmitt.com>"
+    }
+  }
+}
