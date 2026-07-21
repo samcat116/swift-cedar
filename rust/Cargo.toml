@@ -19,9 +19,16 @@ cli = ["uniffi/cli"]
 
 [dependencies]
 cedar-policy = { version = "4.11", features = ["permissive-validate"] }
+# Symbolic analysis (SymCC). Translates policies to SMT and shells out to a
+# cvc5 binary at *runtime*, so this adds no build-time or link-time dependency
+# — the prebuilt artifacts stay exactly as they were.
+cedar-policy-symcc = "0.5"
 serde_json = "1"
 thiserror = "2"
-uniffi = "0.32"
+# SymCC's solver I/O is tokio-based, and UniFFI needs a named runtime to drive
+# the exported async methods.
+tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util"] }
+uniffi = { version = "0.32", features = ["tokio"] }
 
 [profile.release]
 lto = true

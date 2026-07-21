@@ -9,8 +9,10 @@ use std::sync::Arc;
 
 use cedar_policy::{
     Authorizer, Context, Decision, Entities, EntityId, EntityTypeName, EntityUid, Policy,
-    PolicyId, PolicySet, Request, Schema, ValidationMode, Validator,
+    PolicyId, PolicySet, Request, RequestEnv, Schema, ValidationMode, Validator,
 };
+use cedar_policy_symcc::{solver::LocalSolver, CedarSymCompiler, CompiledPolicySet};
+use tokio::process::Command;
 
 uniffi::setup_scaffolding!();
 
@@ -32,6 +34,17 @@ pub enum CedarError {
     JsonError { message: String },
     #[error("internal error: {message}")]
     InternalError { message: String },
+    /// The SMT solver could not be started, died, or timed out. Distinct from
+    /// `AnalysisError` because it says the question went unanswered rather
+    /// than that the answer was no — callers that fail closed need to tell
+    /// those apart.
+    #[error("solver unavailable: {message}")]
+    SolverError { message: String },
+    /// The symbolic compiler rejected the query itself: a policy that is not
+    /// well-typed for the request environment, an action absent from the
+    /// schema, an unsupported construct.
+    #[error("symbolic analysis error: {message}")]
+    AnalysisError { message: String },
 }
 
 fn parse_err(e: impl std::fmt::Display) -> CedarError {
@@ -400,6 +413,195 @@ pub fn validate_policies(
                 message: w.to_string(),
             })
             .collect(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Symbolic analysis (SymCC)
+// ---------------------------------------------------------------------------
+
+/// The "type" of request an analysis is performed over: which principal type,
+/// which action, which resource type.
+///
+/// SymCC reasons one request environment at a time, so a question about a
+/// whole policy set is really N questions. The caller chooses N — it knows
+/// which environments can possibly matter and which are a waste of a solver
+/// process.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiRequestEnv {
+    /// Fully-qualified principal entity type, e.g. `User`.
+    pub principal_type: String,
+    /// The action id, e.g. `vm:start` (the type is always `Action`).
+    pub action: String,
+    /// Fully-qualified resource entity type, e.g. `Project`.
+    pub resource_type: String,
+}
+
+/// The answer to one analysis query.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiAnalysisResult {
+    /// Whether the property asked about holds.
+    pub holds: bool,
+    /// A concrete request violating the property, rendered for humans, when
+    /// the caller asked for one and the property does not hold.
+    pub counterexample: Option<String>,
+}
+
+/// A symbolic compiler over a local cvc5 process.
+///
+/// Stateless by construction: each query spawns its own solver, because a
+/// long-lived SMT process is stateful, poisonable by one bad query, and would
+/// have to be serialized behind a lock anyway. Spawning is negligible next to
+/// solving, and these analyses run on policy writes, not on the request path.
+#[derive(uniffi::Object)]
+pub struct FfiSymbolicCompiler {
+    solver_path: String,
+    timeout_ms: u32,
+}
+
+/// The two-policy-set questions this compiler can answer.
+enum Query {
+    /// Is any request allowed by both sets?
+    Disjoint,
+    /// Does every request allowed by the first set get allowed by the second?
+    Implies,
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+impl FfiSymbolicCompiler {
+    /// Build a compiler driving the cvc5 executable at `solver_path`.
+    ///
+    /// The path is explicit rather than read from the ambient `CVC5`
+    /// environment variable the way `LocalSolver::cvc5()` does: a server
+    /// deciding whether to fail closed needs to know *which* binary it is
+    /// about to trust, and inheriting it from the environment makes that
+    /// unanswerable.
+    #[uniffi::constructor]
+    pub fn new(solver_path: String, timeout_ms: u32) -> Arc<Self> {
+        Arc::new(Self {
+            solver_path,
+            timeout_ms,
+        })
+    }
+
+    /// Returns whether no request in `env` is allowed by both policy sets.
+    ///
+    /// `holds == false` means the sets overlap, and the counterexample is a
+    /// request both would allow.
+    pub async fn check_disjoint(
+        &self,
+        schema: Arc<FfiSchema>,
+        policies_a: Arc<FfiPolicySet>,
+        policies_b: Arc<FfiPolicySet>,
+        env: FfiRequestEnv,
+        counterexample: bool,
+    ) -> Result<FfiAnalysisResult, CedarError> {
+        self.run(Query::Disjoint, schema, policies_a, policies_b, env, counterexample)
+            .await
+    }
+
+    /// Returns whether every request in `env` allowed by `policies_a` is also
+    /// allowed by `policies_b` — subsumption.
+    ///
+    /// `holds == false` means the first set reaches something the second does
+    /// not, and the counterexample is such a request.
+    pub async fn check_implies(
+        &self,
+        schema: Arc<FfiSchema>,
+        policies_a: Arc<FfiPolicySet>,
+        policies_b: Arc<FfiPolicySet>,
+        env: FfiRequestEnv,
+        counterexample: bool,
+    ) -> Result<FfiAnalysisResult, CedarError> {
+        self.run(Query::Implies, schema, policies_a, policies_b, env, counterexample)
+            .await
+    }
+}
+
+impl FfiSymbolicCompiler {
+    async fn run(
+        &self,
+        query: Query,
+        schema: Arc<FfiSchema>,
+        policies_a: Arc<FfiPolicySet>,
+        policies_b: Arc<FfiPolicySet>,
+        env: FfiRequestEnv,
+        counterexample: bool,
+    ) -> Result<FfiAnalysisResult, CedarError> {
+        let request_env = env.to_cedar()?;
+        // Compilation is where a policy that is not well-typed for this
+        // environment is caught; it is an analysis error, not a solver one.
+        let compiled_a =
+            CompiledPolicySet::compile(&policies_a.policy_set, &request_env, &schema.schema)
+                .map_err(analysis_err)?;
+        let compiled_b =
+            CompiledPolicySet::compile(&policies_b.policy_set, &request_env, &schema.schema)
+                .map_err(analysis_err)?;
+
+        let mut compiler = self.spawn()?;
+        if counterexample {
+            let found = match query {
+                Query::Disjoint => {
+                    compiler
+                        .check_disjoint_with_counterexample_opt(&compiled_a, &compiled_b)
+                        .await
+                }
+                Query::Implies => {
+                    compiler
+                        .check_implies_with_counterexample_opt(&compiled_a, &compiled_b)
+                        .await
+                }
+            }
+            .map_err(solver_err)?;
+            Ok(FfiAnalysisResult {
+                holds: found.is_none(),
+                counterexample: found.map(|env| env.to_string()),
+            })
+        } else {
+            let holds = match query {
+                Query::Disjoint => compiler.check_disjoint_opt(&compiled_a, &compiled_b).await,
+                Query::Implies => compiler.check_implies_opt(&compiled_a, &compiled_b).await,
+            }
+            .map_err(solver_err)?;
+            Ok(FfiAnalysisResult {
+                holds,
+                counterexample: None,
+            })
+        }
+    }
+
+    fn spawn(&self) -> Result<CedarSymCompiler<LocalSolver>, CedarError> {
+        let mut command = Command::new(&self.solver_path);
+        command
+            .args(["--lang", "smt"])
+            .arg(format!("--tlimit={}", self.timeout_ms));
+        let solver = LocalSolver::from_command(&mut command).map_err(solver_err)?;
+        CedarSymCompiler::new(solver).map_err(solver_err)
+    }
+}
+
+impl FfiRequestEnv {
+    fn to_cedar(&self) -> Result<RequestEnv, CedarError> {
+        let principal = EntityTypeName::from_str(&self.principal_type).map_err(parse_err)?;
+        let resource = EntityTypeName::from_str(&self.resource_type).map_err(parse_err)?;
+        let action = FfiEntityUid {
+            type_name: "Action".to_string(),
+            id: self.action.clone(),
+        }
+        .to_cedar()?;
+        Ok(RequestEnv::new(principal, action, resource))
+    }
+}
+
+fn solver_err(e: impl std::fmt::Display) -> CedarError {
+    CedarError::SolverError {
+        message: e.to_string(),
+    }
+}
+
+fn analysis_err(e: impl std::fmt::Display) -> CedarError {
+    CedarError::AnalysisError {
+        message: e.to_string(),
     }
 }
 

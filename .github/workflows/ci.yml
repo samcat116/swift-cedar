@@ -21,6 +21,10 @@ jobs:
           workspaces: rust
       - name: Build XCFramework
         run: ./scripts/build-xcframework.sh
+      # The symbolic-analysis tests skip themselves without a solver, which
+      # would make them silently stop covering anything.
+      - name: Install cvc5
+        run: sudo ./scripts/install-cvc5.sh
       - name: Test
         run: swift test
 
@@ -40,7 +44,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Rust
         run: |
-          apt-get update && apt-get install -y curl build-essential
+          apt-get update && apt-get install -y curl build-essential unzip
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: Swatinem/rust-cache@v2
@@ -48,5 +52,7 @@ jobs:
           workspaces: rust
       - name: Build artifact bundle
         run: ./scripts/build-linux.sh
+      - name: Install cvc5
+        run: ./scripts/install-cvc5.sh
       - name: Test
         run: swift test
