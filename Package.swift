@@ -7,12 +7,14 @@ import PackageDescription
 #if os(Linux)
 let cedarFFIBinaryTarget: Target = .binaryTarget(
     name: "CedarFFIBinary",
-    path: "artifacts/CedarFFI.artifactbundle"
+    url: "https://github.com/samcat116/swift-cedar/releases/download/v0.2.0/CedarFFI.artifactbundle.zip",
+    checksum: "14b5aab4e41f44e85c6da0681df572913d752b16a2969d2bf85f39cb07af706a"
 )
 #else
 let cedarFFIBinaryTarget: Target = .binaryTarget(
     name: "CedarFFIBinary",
-    path: "artifacts/CedarFFI.xcframework"
+    url: "https://github.com/samcat116/swift-cedar/releases/download/v0.2.0/CedarFFI.xcframework.zip",
+    checksum: "0f8bb20f697807d3a6721cb5e6ab55b6bbae09a503785800a56258d39114a0d6"
 )
 #endif
 // RELEASE-BINARY-TARGET-END
