@@ -14,6 +14,15 @@ public enum CedarError: Error, Hashable, Sendable, CustomStringConvertible {
     case json(String)
     /// An unexpected internal error.
     case internalError(String)
+    /// The SMT solver backing `SymbolicCompiler` could not be started, died,
+    /// or timed out. Separate from `analysis` because it means the question
+    /// went unanswered, not that the answer was no — a caller that fails
+    /// closed on symbolic analysis has to tell those apart.
+    case solver(String)
+    /// The symbolic compiler rejected the query: a policy that is not
+    /// well-typed for the request environment, an action absent from the
+    /// schema, an unsupported construct.
+    case analysis(String)
 
     public var description: String {
         switch self {
@@ -23,6 +32,23 @@ public enum CedarError: Error, Hashable, Sendable, CustomStringConvertible {
         case .request(let m): return "invalid request: \(m)"
         case .json(let m): return "JSON error: \(m)"
         case .internalError(let m): return "internal error: \(m)"
+        case .solver(let m): return "solver unavailable: \(m)"
+        case .analysis(let m): return "symbolic analysis error: \(m)"
+        }
+    }
+
+    /// Translate one FFI error. Shared by the sync and async call wrappers so
+    /// a new FFI case cannot be handled in one and forgotten in the other.
+    static func from(_ error: CedarFFI.CedarError) -> CedarError {
+        switch error {
+        case .ParseError(let message): return .parse(message)
+        case .EntitiesError(let message): return .entities(message)
+        case .SchemaError(let message): return .schema(message)
+        case .RequestError(let message): return .request(message)
+        case .JsonError(let message): return .json(message)
+        case .InternalError(let message): return .internalError(message)
+        case .SolverError(let message): return .solver(message)
+        case .AnalysisError(let message): return .analysis(message)
         }
     }
 }
@@ -32,13 +58,15 @@ func cedarCall<T>(_ body: () throws -> T) throws -> T {
     do {
         return try body()
     } catch let error as CedarFFI.CedarError {
-        switch error {
-        case .ParseError(let message): throw CedarError.parse(message)
-        case .EntitiesError(let message): throw CedarError.entities(message)
-        case .SchemaError(let message): throw CedarError.schema(message)
-        case .RequestError(let message): throw CedarError.request(message)
-        case .JsonError(let message): throw CedarError.json(message)
-        case .InternalError(let message): throw CedarError.internalError(message)
-        }
+        throw CedarError.from(error)
+    }
+}
+
+/// `cedarCall` for the async FFI surface (`SymbolicCompiler`).
+func cedarCall<T>(_ body: () async throws -> T) async throws -> T {
+    do {
+        return try await body()
+    } catch let error as CedarFFI.CedarError {
+        throw CedarError.from(error)
     }
 }

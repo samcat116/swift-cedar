@@ -465,6 +465,22 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
+    typealias FfiType = UInt32
+    typealias SwiftType = UInt32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterBool : FfiConverter {
     typealias FfiType = Int8
     typealias SwiftType = Bool
@@ -1340,6 +1356,280 @@ public func FfiConverterTypeFfiSchema_lower(_ value: FfiSchema) -> UInt64 {
 
 
 
+
+
+/**
+ * A symbolic compiler over a local cvc5 process.
+ *
+ * Stateless by construction: each query spawns its own solver, because a
+ * long-lived SMT process is stateful, poisonable by one bad query, and would
+ * have to be serialized behind a lock anyway. Spawning is negligible next to
+ * solving, and these analyses run on policy writes, not on the request path.
+ */
+public protocol FfiSymbolicCompilerProtocol: AnyObject, Sendable {
+    
+    /**
+     * Returns whether no request in `env` is allowed by both policy sets.
+     *
+     * `holds == false` means the sets overlap, and the counterexample is a
+     * request both would allow.
+     */
+    func checkDisjoint(schema: FfiSchema, policiesA: FfiPolicySet, policiesB: FfiPolicySet, env: FfiRequestEnv, counterexample: Bool) async throws  -> FfiAnalysisResult
+    
+    /**
+     * Returns whether every request in `env` allowed by `policies_a` is also
+     * allowed by `policies_b` — subsumption.
+     *
+     * `holds == false` means the first set reaches something the second does
+     * not, and the counterexample is such a request.
+     */
+    func checkImplies(schema: FfiSchema, policiesA: FfiPolicySet, policiesB: FfiPolicySet, env: FfiRequestEnv, counterexample: Bool) async throws  -> FfiAnalysisResult
+    
+}
+/**
+ * A symbolic compiler over a local cvc5 process.
+ *
+ * Stateless by construction: each query spawns its own solver, because a
+ * long-lived SMT process is stateful, poisonable by one bad query, and would
+ * have to be serialized behind a lock anyway. Spawning is negligible next to
+ * solving, and these analyses run on policy writes, not on the request path.
+ */
+open class FfiSymbolicCompiler: FfiSymbolicCompilerProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cedar_ffi_fn_clone_ffisymboliccompiler(self.handle, $0) }
+    }
+    /**
+     * Build a compiler driving the cvc5 executable at `solver_path`.
+     *
+     * The path is explicit rather than read from the ambient `CVC5`
+     * environment variable the way `LocalSolver::cvc5()` does: a server
+     * deciding whether to fail closed needs to know *which* binary it is
+     * about to trust, and inheriting it from the environment makes that
+     * unanswerable.
+     */
+public convenience init(solverPath: String, timeoutMs: UInt32) {
+    let handle =
+        try! rustCall() {
+        uniffiCallStatus in
+    uniffi_cedar_ffi_fn_constructor_ffisymboliccompiler_new(
+        FfiConverterString.lower(solverPath),
+        FfiConverterUInt32.lower(timeoutMs),uniffiCallStatus
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cedar_ffi_fn_free_ffisymboliccompiler(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Returns whether no request in `env` is allowed by both policy sets.
+     *
+     * `holds == false` means the sets overlap, and the counterexample is a
+     * request both would allow.
+     */
+open func checkDisjoint(schema: FfiSchema, policiesA: FfiPolicySet, policiesB: FfiPolicySet, env: FfiRequestEnv, counterexample: Bool)async throws  -> FfiAnalysisResult  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cedar_ffi_fn_method_ffisymboliccompiler_check_disjoint(
+                        self.uniffiCloneHandle(),FfiConverterTypeFfiSchema_lower(schema),FfiConverterTypeFfiPolicySet_lower(policiesA),FfiConverterTypeFfiPolicySet_lower(policiesB),FfiConverterTypeFfiRequestEnv_lower(env),FfiConverterBool.lower(counterexample)
+                )
+            },
+            pollFunc: ffi_cedar_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cedar_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cedar_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeFfiAnalysisResult_lift,
+            errorHandler: FfiConverterTypeCedarError_lift
+        )
+}
+    
+    /**
+     * Returns whether every request in `env` allowed by `policies_a` is also
+     * allowed by `policies_b` — subsumption.
+     *
+     * `holds == false` means the first set reaches something the second does
+     * not, and the counterexample is such a request.
+     */
+open func checkImplies(schema: FfiSchema, policiesA: FfiPolicySet, policiesB: FfiPolicySet, env: FfiRequestEnv, counterexample: Bool)async throws  -> FfiAnalysisResult  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cedar_ffi_fn_method_ffisymboliccompiler_check_implies(
+                        self.uniffiCloneHandle(),FfiConverterTypeFfiSchema_lower(schema),FfiConverterTypeFfiPolicySet_lower(policiesA),FfiConverterTypeFfiPolicySet_lower(policiesB),FfiConverterTypeFfiRequestEnv_lower(env),FfiConverterBool.lower(counterexample)
+                )
+            },
+            pollFunc: ffi_cedar_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cedar_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cedar_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeFfiAnalysisResult_lift,
+            errorHandler: FfiConverterTypeCedarError_lift
+        )
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSymbolicCompiler: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = FfiSymbolicCompiler
+
+    public static func lift(_ handle: UInt64) throws -> FfiSymbolicCompiler {
+        return FfiSymbolicCompiler(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: FfiSymbolicCompiler) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSymbolicCompiler {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: FfiSymbolicCompiler, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSymbolicCompiler_lift(_ handle: UInt64) throws -> FfiSymbolicCompiler {
+    return try FfiConverterTypeFfiSymbolicCompiler.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSymbolicCompiler_lower(_ value: FfiSymbolicCompiler) -> UInt64 {
+    return FfiConverterTypeFfiSymbolicCompiler.lower(value)
+}
+
+
+
+
+/**
+ * The answer to one analysis query.
+ */
+public struct FfiAnalysisResult: Equatable, Hashable {
+    /**
+     * Whether the property asked about holds.
+     */
+    public var holds: Bool
+    /**
+     * A concrete request violating the property, rendered for humans, when
+     * the caller asked for one and the property does not hold.
+     */
+    public var counterexample: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Whether the property asked about holds.
+         */holds: Bool, 
+        /**
+         * A concrete request violating the property, rendered for humans, when
+         * the caller asked for one and the property does not hold.
+         */counterexample: String?) {
+        self.holds = holds
+        self.counterexample = counterexample
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiAnalysisResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiAnalysisResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiAnalysisResult {
+        return
+            try FfiAnalysisResult(
+                holds: FfiConverterBool.read(from: &buf), 
+                counterexample: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiAnalysisResult, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.holds, into: &buf)
+        FfiConverterOptionString.write(value.counterexample, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAnalysisResult_lift(_ buf: RustBuffer) throws -> FfiAnalysisResult {
+    return try FfiConverterTypeFfiAnalysisResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAnalysisResult_lower(_ value: FfiAnalysisResult) -> RustBuffer {
+    return FfiConverterTypeFfiAnalysisResult.lower(value)
+}
+
+
 /**
  * A Cedar entity reference, e.g. `User::"alice"`.
  */
@@ -1406,6 +1696,91 @@ public func FfiConverterTypeFfiEntityUid_lift(_ buf: RustBuffer) throws -> FfiEn
 #endif
 public func FfiConverterTypeFfiEntityUid_lower(_ value: FfiEntityUid) -> RustBuffer {
     return FfiConverterTypeFfiEntityUid.lower(value)
+}
+
+
+/**
+ * The "type" of request an analysis is performed over: which principal type,
+ * which action, which resource type.
+ *
+ * SymCC reasons one request environment at a time, so a question about a
+ * whole policy set is really N questions. The caller chooses N — it knows
+ * which environments can possibly matter and which are a waste of a solver
+ * process.
+ */
+public struct FfiRequestEnv: Equatable, Hashable {
+    /**
+     * Fully-qualified principal entity type, e.g. `User`.
+     */
+    public var principalType: String
+    /**
+     * The action id, e.g. `vm:start` (the type is always `Action`).
+     */
+    public var action: String
+    /**
+     * Fully-qualified resource entity type, e.g. `Project`.
+     */
+    public var resourceType: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Fully-qualified principal entity type, e.g. `User`.
+         */principalType: String, 
+        /**
+         * The action id, e.g. `vm:start` (the type is always `Action`).
+         */action: String, 
+        /**
+         * Fully-qualified resource entity type, e.g. `Project`.
+         */resourceType: String) {
+        self.principalType = principalType
+        self.action = action
+        self.resourceType = resourceType
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiRequestEnv: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRequestEnv: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRequestEnv {
+        return
+            try FfiRequestEnv(
+                principalType: FfiConverterString.read(from: &buf), 
+                action: FfiConverterString.read(from: &buf), 
+                resourceType: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiRequestEnv, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.principalType, into: &buf)
+        FfiConverterString.write(value.action, into: &buf)
+        FfiConverterString.write(value.resourceType, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRequestEnv_lift(_ buf: RustBuffer) throws -> FfiRequestEnv {
+    return try FfiConverterTypeFfiRequestEnv.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRequestEnv_lower(_ value: FfiRequestEnv) -> RustBuffer {
+    return FfiConverterTypeFfiRequestEnv.lower(value)
 }
 
 
@@ -1614,6 +1989,21 @@ enum CedarError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     )
     case InternalError(message: String
     )
+    /**
+     * The SMT solver could not be started, died, or timed out. Distinct from
+     * `AnalysisError` because it says the question went unanswered rather
+     * than that the answer was no — callers that fail closed need to tell
+     * those apart.
+     */
+    case SolverError(message: String
+    )
+    /**
+     * The symbolic compiler rejected the query itself: a policy that is not
+     * well-typed for the request environment, an action absent from the
+     * schema, an unsupported construct.
+     */
+    case AnalysisError(message: String
+    )
 
     
 
@@ -1661,6 +2051,12 @@ public struct FfiConverterTypeCedarError: FfiConverterRustBuffer {
         case 6: return .InternalError(
             message: try FfiConverterString.read(from: &buf)
             )
+        case 7: return .SolverError(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 8: return .AnalysisError(
+            message: try FfiConverterString.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1700,6 +2096,16 @@ public struct FfiConverterTypeCedarError: FfiConverterRustBuffer {
         
         case let .InternalError(message):
             writeInt(&buf, Int32(6))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .SolverError(message):
+            writeInt(&buf, Int32(7))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .AnalysisError(message):
+            writeInt(&buf, Int32(8))
             FfiConverterString.write(message, into: &buf)
             
         }
@@ -1975,6 +2381,54 @@ fileprivate struct FfiConverterSequenceTypeFfiValidationIssue: FfiConverterRustB
         return seq
     }
 }
+private let UNIFFI_RUST_FUTURE_POLL_READY: Int8 = 0
+private let UNIFFI_RUST_FUTURE_POLL_WAKE: Int8 = 1
+
+fileprivate let uniffiContinuationHandleMap = UniffiHandleMap<UnsafeContinuation<Int8, Never>>()
+
+fileprivate func uniffiRustCallAsync<F, T>(
+    rustFutureFunc: () -> UInt64,
+    pollFunc: (UInt64, @escaping UniffiRustFutureContinuationCallback, UInt64) -> (),
+    completeFunc: (UInt64, UnsafeMutablePointer<RustCallStatus>) -> F,
+    freeFunc: (UInt64) -> (),
+    liftFunc: (F) throws -> T,
+    errorHandler: ((RustBuffer) throws -> Swift.Error)?
+) async throws -> T {
+    // Make sure to call the ensure init function since future creation doesn't have a
+    // RustCallStatus param, so doesn't use makeRustCall()
+    uniffiEnsureCedarFfiInitialized()
+    let rustFuture = rustFutureFunc()
+    defer {
+        freeFunc(rustFuture)
+    }
+    var pollResult: Int8;
+    repeat {
+        pollResult = await withUnsafeContinuation {
+            pollFunc(
+                rustFuture,
+                { handle, pollResult in
+                    uniffiFutureContinuationCallback(handle: handle, pollResult: pollResult)
+                },
+                uniffiContinuationHandleMap.insert(obj: $0)
+            )
+        }
+    } while pollResult != UNIFFI_RUST_FUTURE_POLL_READY
+
+    return try liftFunc(makeRustCall(
+        { completeFunc(rustFuture, $0) },
+        errorHandler: errorHandler
+    ))
+}
+
+// Callback handlers for an async calls.  These are invoked by Rust when the future is ready.  They
+// lift the return value or error and resume the suspended function.
+fileprivate func uniffiFutureContinuationCallback(handle: UInt64, pollResult: Int8) {
+    if let continuation = try? uniffiContinuationHandleMap.remove(handle: handle) {
+        continuation.resume(returning: pollResult)
+    } else {
+        print("uniffiFutureContinuationCallback invalid handle")
+    }
+}
 /**
  * The version of the underlying cedar-policy engine.
  */
@@ -2047,6 +2501,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cedar_ffi_checksum_method_ffipolicyset_to_cedar() != 52077) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cedar_ffi_checksum_method_ffisymboliccompiler_check_disjoint() != 48132) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cedar_ffi_checksum_method_ffisymboliccompiler_check_implies() != 41519) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cedar_ffi_checksum_constructor_ffiauthorizer_new() != 37195) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -2075,6 +2535,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cedar_ffi_checksum_constructor_ffischema_parse() != 22171) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cedar_ffi_checksum_constructor_ffisymboliccompiler_new() != 48893) {
         return InitializationResult.apiChecksumMismatch
     }
 
