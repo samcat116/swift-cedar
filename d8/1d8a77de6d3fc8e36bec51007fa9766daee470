@@ -1,0 +1,45 @@
+Sources/CedarPolicy/CedarError.swift
+  s_c44fe57920bab1::t_f168d1559608a2 17-25
+  s_c44fe57920bab1::t_72a0c668258021 35-51,61-70
+Sources/CedarPolicy/SymbolicCompiler.swift
+  s_c44fe57920bab1::t_4b4e69bf88ccee 1-111
+.github/workflows/ci.yml
+  s_c44fe57920bab1::t_9e5e42dc0aa608 24-27
+  s_c44fe57920bab1::t_6bc04b3bf06859 47
+  s_c44fe57920bab1::t_5f5b4915d3505e 55-56
+rust/Cargo.toml
+  s_c44fe57920bab1::t_f4a2c331bcbde3 22-25,28-31
+rust/src/lib.rs
+  s_c44fe57920bab1::t_fa153270c8531c 12,14
+  s_c44fe57920bab1::t_01032149118bc3 419-607
+  s_c44fe57920bab1::t_aadd2fb3ab7607 15
+  s_c44fe57920bab1::t_aacc866327a416 37-47
+scripts/install-cvc5.sh
+  s_c44fe57920bab1::t_8c3513247a99e1 1-40
+README.md
+  s_c44fe57920bab1::t_6cc41f623d5f24 91-128
+  s_c44fe57920bab1::t_cecc6e8e1fa5f7 173-175
+  s_c44fe57920bab1::t_f006249c36d1dd 187,190-191
+Tests/CedarPolicyTests/SymbolicCompilerTests.swift
+  s_c44fe57920bab1::t_ea9588308f537d 1-103
+Sources/CedarFFI/CedarFFI.swift
+  s_c44fe57920bab1::t_81fd80d8847924 465-480,1359-1632,1702-1786,1992-2006,2054-2059,2101-2110,2384-2431,2504-2509,2540-2542
+rust/Cargo.lock
+  s_c44fe57920bab1::t_1f01a6ecca610b 112-135,266,269,336-356,376,379,608-613,926-936,962-971,978-986,1393-1402,1581-1594,1744,1833-1838
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "d81d8a77de6d3fc8e36bec51007fa9766daee470",
+  "prompts": {},
+  "sessions": {
+    "s_c44fe57920bab1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "96147659-e96e-4eb4-b817-e8b6736291dc",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Sam Schmitt <sam@samschmitt.com>"
+    }
+  }
+}
